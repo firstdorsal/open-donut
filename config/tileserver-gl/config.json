@@ -1,0 +1,13 @@
+{
+    "options": {
+        "paths": {
+            "root": "",
+            "mbtiles": "tiles"
+        }
+    },
+    "data": {
+        "planet": {
+            "mbtiles": "2020-10-planet-14.mbtiles"
+        }
+    }
+}

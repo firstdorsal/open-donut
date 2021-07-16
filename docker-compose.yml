@@ -1,0 +1,114 @@
+version: "3.7"
+services:
+    # the tiles that get served to the mapbox renderer in the frontend
+    tileserver-gl:
+        container_name: map-tileserver
+        restart: always
+        image: maptiler/tileserver-gl
+        volumes:
+            - openmaptiles:/data/
+            - ./config/tileserver-gl/config.json:/data/config.json:ro
+        command: ["-p", "80"] #, "--mbtiles", "tiles.mbtiles"  , "-u", "tileserver"
+        networks:
+            - rp
+        labels:
+            traefik.enable: "true"
+            traefik.http.routers.tileserver-gl.tls.certresolver: "default"
+            traefik.http.routers.tileserver-gl.tls.domains[0].main: "${DOMAIN}"
+            traefik.http.routers.tileserver-gl.tls.domains[0].sans: "*.${DOMAIN}"
+            traefik.http.routers.tileserver-gl.rule: "Host(`${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`/data`)"
+            traefik.http.routers.tileserver-gl.tls: "true"
+            traefik.http.routers.tileserver-gl.entrypoints: "websecure"
+            #traefik.http.routers.tileserver-gl.middlewares: repl-tileserver@docker
+            #traefik.http.middlewares.repl-tileserver.replacepathregex.regex: ^/tileserver/(.*)
+            #traefik.http.middlewares.repl-tileserver.replacepathregex.replacement: /$$1
+            traefik.http.services.tileserver-gl.loadbalancer.server.port: "80"
+            traefik.docker.network: rp
+    # fonts and icons for the mapbox map renderer
+    assets:
+        container_name: map-assets
+        restart: always
+        image: nginx:stable-alpine
+        networks:
+            - rp
+        volumes:
+            - assets:/usr/share/nginx/html/
+            - ./config/assets/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+        environment:
+            - CORS_ALLOW=${CORS_ALLOW}
+        labels:
+            traefik.enable: "true"
+            traefik.http.routers.assets.tls.certresolver: "default"
+            traefik.http.routers.assets.tls.domains[0].main: "${DOMAIN}"
+            traefik.http.routers.assets.tls.domains[0].sans: "*.${DOMAIN}"
+            traefik.http.routers.assets.rule: "Host(`${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`/assets`)"
+            traefik.http.routers.assets.tls: "true"
+            traefik.http.routers.assets.entrypoints: "websecure"
+            traefik.http.services.assets.loadbalancer.server.port: "80"
+            traefik.docker.network: rp
+    # share the mbtiles via torrent with other users
+    transmission:
+        image: ghcr.io/linuxserver/transmission
+        container_name: map-transmission
+        restart: unless-stopped
+        environment:
+            - PUID=0
+            - PGID=0
+            - TZ=${TIMEZONE}
+            - USER=user
+            - PASS=password
+        volumes:
+            - ./config/transmission/config:/config
+            - ./config/transmission/scripts:/scripts
+            - openmaptiles:/downloads
+        ports:
+            - 51414:51414
+            - 51414:51414/udp
+            #- 127.0.0.1:9091:9091
+    # geocoder transforming adress and poi searches into coordinates or reverse
+    photon:
+        container_name: map-photon
+        networks:
+            - elastic
+            - rp
+        restart: unless-stopped
+        build:
+            context: ./config/photon/build/
+        entrypoint: "/photon/entrypoint.sh -cors-any -transport-addresses map-elastic"
+        #volumes:
+        #    - photon:/photon/photon_data
+        labels:
+            traefik.enable: "true"
+            traefik.http.routers.photon.tls.certresolver: "default"
+            traefik.http.routers.photon.tls.domains[0].main: "${DOMAIN}"
+            traefik.http.routers.photon.tls.domains[0].sans: "*.${DOMAIN}"
+            traefik.http.routers.photon.rule: "Host(`${SUBDOMAIN}.${DOMAIN}`) && PathPrefix(`/api`)"
+            traefik.http.routers.photon.tls: "true"
+            traefik.http.routers.photon.entrypoints: "websecure"
+            traefik.http.services.photon.loadbalancer.server.port: "2322"
+            traefik.docker.network: rp
+    elastic:
+        container_name: map-elastic
+        restart: unless-stopped
+        image: elasticsearch:5.6.16
+        volumes:
+            - photon:/usr/share/elasticsearch/data
+            - ./config/elastic/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+        networks:
+            - elastic
+    #environment:
+    #    - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    #    - "discovery.type=single-node"
+    #    - "node.name=map-elastic"
+    #    - "cluster.name=photon"
+    #    - "xpack.security.enabled=false"
+    #    - "transport.host=0.0.0.0"
+
+volumes:
+    openmaptiles:
+    assets:
+    photon:
+networks:
+    rp:
+        name: ${RP_NAME}
+    elastic:
